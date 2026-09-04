@@ -1099,6 +1099,44 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "followup_sequences"
             referencedColumns: ["id"]
+      funnels: {
+        Row: {
+          allowed_sources: string[] | null
+          created_at: string | null
+          id: string
+          name: string
+          order_index: number | null
+          owner_user_id: string | null
+          tenant_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          allowed_sources?: string[] | null
+          created_at?: string | null
+          id?: string
+          name: string
+          order_index?: number | null
+          owner_user_id?: string | null
+          tenant_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          allowed_sources?: string[] | null
+          created_at?: string | null
+          id?: string
+          name?: string
+          order_index?: number | null
+          owner_user_id?: string | null
+          tenant_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "funnels_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -1395,11 +1433,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
       lead_stages: {
         Row: {
           color: string | null
           created_at: string | null
+          funnel_id: string | null
           id: string
           name: string
           order_index: number
@@ -1408,6 +1446,7 @@ export type Database = {
         Insert: {
           color?: string | null
           created_at?: string | null
+          funnel_id?: string | null
           id?: string
           name: string
           order_index?: number
@@ -1416,12 +1455,20 @@ export type Database = {
         Update: {
           color?: string | null
           created_at?: string | null
+          funnel_id?: string | null
           id?: string
           name?: string
           order_index?: number
           tenant_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "lead_stages_funnel_id_fkey"
+            columns: ["funnel_id"]
+            isOneToOne: false
+            referencedRelation: "funnels"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "lead_stages_tenant_id_fkey"
             columns: ["tenant_id"]
@@ -1880,6 +1927,7 @@ export type Database = {
           has_whatsapp: boolean | null
           is_highlighted: boolean | null
           max_assets: number | null
+          max_funnels: number | null
           max_bulk_messages_per_month: number | null
           max_followup_sequences: number | null
           max_leads_per_month: number | null
@@ -1903,6 +1951,7 @@ export type Database = {
           has_whatsapp?: boolean | null
           is_highlighted?: boolean | null
           max_assets?: number | null
+          max_funnels?: number | null
           max_bulk_messages_per_month?: number | null
           max_followup_sequences?: number | null
           max_leads_per_month?: number | null
@@ -1926,6 +1975,7 @@ export type Database = {
           has_whatsapp?: boolean | null
           is_highlighted?: boolean | null
           max_assets?: number | null
+          max_funnels?: number | null
           max_bulk_messages_per_month?: number | null
           max_followup_sequences?: number | null
           max_leads_per_month?: number | null

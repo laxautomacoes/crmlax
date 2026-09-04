@@ -59,7 +59,7 @@ type PipelineLead = Lead & {
     date?: string | null
 }
 
-export async function getPipelineData(tenantId: string) {
+export async function getPipelineData(tenantId: string, funnelId?: string) {
     const supabase = await createClient()
     const { profile } = await getProfile()
     const isAdmin = profile?.role === 'admin' || profile?.role === 'superadmin'
@@ -101,14 +101,55 @@ export async function getPipelineData(tenantId: string) {
         leadsQuery = leadsQuery.eq('assigned_to', profile.id)
     }
 
-    const [stagesResult, leadsResult] = await Promise.all([
-        getStages(tenantId),
-        leadsQuery
-    ])
+    let actualFunnelId = funnelId;
+    let stagesData: any[] | null = null;
 
-    if (!stagesResult.success) {
-        return { success: false, error: stagesResult.error }
+    // Tenta buscar o funil — se a tabela não existir ainda (pré-migração), usa fallback
+    if (!actualFunnelId) {
+        try {
+            const { data: firstFunnel, error: funnelError } = await supabase
+                .from('funnels')
+                .select('id')
+                .eq('tenant_id', tenantId)
+                .order('order_index', { ascending: true })
+                .limit(1)
+                .single();
+            
+            if (!funnelError && firstFunnel) {
+                actualFunnelId = firstFunnel.id;
+            }
+        } catch {
+            // Tabela funnels não existe ainda — prosseguir sem funnel_id
+        }
     }
+
+    if (actualFunnelId) {
+        // Modo multi-funil: buscar estágios pelo funnel_id
+        const stagesResult = await getStages(tenantId, actualFunnelId)
+        if (!stagesResult.success) {
+            return { success: false, error: stagesResult.error }
+        }
+        stagesData = stagesResult.data || []
+
+        const stageIds = stagesData.map((s: any) => s.id)
+        if (stageIds.length > 0) {
+            leadsQuery = leadsQuery.in('stage_id', stageIds)
+        }
+    } else {
+        // Fallback pré-migração: buscar todos os estágios do tenant
+        const { data: fallbackStages, error: fallbackError } = await supabase
+            .from('lead_stages')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .order('order_index', { ascending: true })
+
+        if (fallbackError) {
+            return { success: false, error: fallbackError.message }
+        }
+        stagesData = fallbackStages || []
+    }
+
+    const leadsResult = await leadsQuery
 
     if (leadsResult.error) {
         return { success: false, error: leadsResult.error.message }
@@ -116,7 +157,7 @@ export async function getPipelineData(tenantId: string) {
 
     // Deduplicar estágios por order_index
     const uniqueStagesMap = new Map<number, StageRecord>()
-    ;((stagesResult.data || []) as StageRecord[]).forEach((stage) => {
+    ;((stagesData || []) as StageRecord[]).forEach((stage) => {
         if (!uniqueStagesMap.has(stage.order_index)) {
             uniqueStagesMap.set(stage.order_index, stage)
         }

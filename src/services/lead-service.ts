@@ -13,6 +13,7 @@ export interface LeadCreateData {
     utm_data?: Record<string, any>;
     status?: string;
     property_interest?: string;
+    funnel_id?: string;
 }
 
 export interface LeadCreateResult {
@@ -23,7 +24,7 @@ export interface LeadCreateResult {
 }
 
 export async function processLeadInbound(data: LeadCreateData) {
-    const { tenant_id, name, phone, email, property_id, source, tags, utm_data, status = 'new', property_interest } = data;
+    const { tenant_id, name, phone, email, property_id, source, tags, utm_data, status = 'new', property_interest, funnel_id } = data;
 
     if (!tenant_id || !phone) {
         throw new Error('Missing tenant_id or phone');
@@ -98,14 +99,61 @@ export async function processLeadInbound(data: LeadCreateData) {
         return { contact_id: contact.id, lead_id: existingLead.id, assigned_to: null, already_exists: true };
     }
 
-    // 3. Buscar o primeiro estágio do pipeline (ex: "Novo") para atribuir ao lead
-    const { data: firstStage } = await supabase
+    // 3. Buscar o primeiro estágio do pipeline para atribuir ao lead
+    let stageQuery = supabase
         .from('lead_stages')
-        .select('id')
+        .select('id, funnel_id')
         .eq('tenant_id', tenant_id)
-        .order('order_index', { ascending: true })
-        .limit(1)
-        .maybeSingle();
+        .order('order_index', { ascending: true });
+        
+    let targetFunnelId = funnel_id;
+    let targetOwnerUserId: string | null = null;
+
+    // Se o usuário não enviou o ID, tentar mapear pelo nome da origem (source) ou origens permitidas
+    if (!targetFunnelId && source) {
+        const { data: tenantFunnels } = await supabase
+            .from('funnels')
+            .select('id, name, allowed_sources, owner_user_id')
+            .eq('tenant_id', tenant_id);
+            
+        if (tenantFunnels) {
+            // 1. Tentar correspondência exata pelo nome do funil (case insensitive)
+            let matched = tenantFunnels.find(f => f.name.toLowerCase() === source.toLowerCase());
+            
+            // 2. Se não encontrou pelo nome, buscar nas origens permitidas
+            if (!matched) {
+                matched = tenantFunnels.find(f => 
+                    f.allowed_sources && 
+                    f.allowed_sources.some((s: string) => s.toLowerCase() === source.toLowerCase())
+                );
+            }
+            
+            if (matched) {
+                targetFunnelId = matched.id;
+                targetOwnerUserId = matched.owner_user_id;
+            }
+        }
+    }
+        
+    if (targetFunnelId) {
+        stageQuery = stageQuery.eq('funnel_id', targetFunnelId);
+    } else {
+        // Fallback: tentar pegar do 'Funil Padrão' ou do funil mais antigo
+        const { data: defaultFunnel } = await supabase
+            .from('funnels')
+            .select('id, owner_user_id')
+            .eq('tenant_id', tenant_id)
+            .order('order_index', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+            
+        if (defaultFunnel) {
+            stageQuery = stageQuery.eq('funnel_id', defaultFunnel.id);
+            targetOwnerUserId = defaultFunnel.owner_user_id;
+        }
+    }
+
+    const { data: firstStage } = await stageQuery.limit(1).maybeSingle();
 
     // 4. Criar o lead vinculado
     const { data: lead, error: leadError } = await supabase
@@ -118,39 +166,57 @@ export async function processLeadInbound(data: LeadCreateData) {
             utm_data: utm_data || {},
             status,
             property_interest: property_interest || null,
-            stage_id: firstStage?.id || null
+            stage_id: firstStage?.id || null,
+            assigned_to: targetOwnerUserId || null
         })
         .select('id')
         .single();
 
     if (leadError) throw leadError;
 
-    // 4. Distribuição Automática (Round Robin)
-    let assignedTo = null;
+    // 5. Distribuição Automática (Round Robin) ou Atribuição Direta
+    let assignedTo = targetOwnerUserId || null;
+    let whatsappNumber: string | null = null;
+    
     try {
-        const { data: broker, error: brokerError } = await supabase
-            .from('profiles')
-            .select('id, full_name, whatsapp_number')
-            .eq('tenant_id', tenant_id)
-            .eq('is_active_for_service', true)
-            .eq('is_archived', false)
-            .order('last_lead_assigned_at', { ascending: true, nullsFirst: true })
-            .limit(1)
-            .single();
-
-        if (broker && !brokerError) {
-            assignedTo = broker.id;
-            await supabase
-                .from('leads')
-                .update({ assigned_to: assignedTo })
-                .eq('id', lead.id);
-
-            await supabase
+        if (!assignedTo) {
+            // Roleta: buscar o próximo corretor da fila
+            const { data: broker, error: brokerError } = await supabase
                 .from('profiles')
-                .update({ last_lead_assigned_at: new Date().toISOString() })
-                .eq('id', assignedTo);
+                .select('id, full_name, whatsapp_number')
+                .eq('tenant_id', tenant_id)
+                .eq('is_active_for_service', true)
+                .eq('is_archived', false)
+                .order('last_lead_assigned_at', { ascending: true, nullsFirst: true })
+                .limit(1)
+                .single();
 
-            // 5. Notificação Interna e WhatsApp via Service
+            if (broker && !brokerError) {
+                assignedTo = broker.id;
+                whatsappNumber = broker.whatsapp_number;
+                
+                await supabase
+                    .from('leads')
+                    .update({ assigned_to: assignedTo })
+                    .eq('id', lead.id);
+
+                await supabase
+                    .from('profiles')
+                    .update({ last_lead_assigned_at: new Date().toISOString() })
+                    .eq('id', assignedTo);
+            }
+        } else {
+            // Atribuição direta: apenas buscar o whatsapp para notificação
+            const { data: owner } = await supabase
+                .from('profiles')
+                .select('whatsapp_number')
+                .eq('id', assignedTo)
+                .single();
+            if (owner) whatsappNumber = owner.whatsapp_number;
+        }
+
+        if (assignedTo) {
+            // 6. Notificação Interna e WhatsApp via Service
             await notificationService.create({
                 user_id: assignedTo,
                 tenant_id,
@@ -158,8 +224,8 @@ export async function processLeadInbound(data: LeadCreateData) {
                 message: `Você recebeu um novo lead: ${name}. Origem: ${source || 'Direto'}`,
                 type: 'new_lead',
                 metadata: { lead_id: lead.id },
-                send_whatsapp: !!broker.whatsapp_number,
-                whatsapp_number: broker.whatsapp_number || undefined
+                send_whatsapp: !!whatsappNumber,
+                whatsapp_number: whatsappNumber || undefined
             });
         }
     } catch (distError) {

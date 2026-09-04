@@ -34,9 +34,9 @@ export async function getAIConfig(tenantId: string): Promise<{ provider: AIProvi
     
     // Atualiza automaticamente typos ou modelos antigos para o topo de linha
     // Atualiza modelos depreciados/antigos automaticamente
-    const DEPRECATED_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
+    const DEPRECATED_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
     if (DEPRECATED_MODELS.includes(resolvedModel)) {
-        resolvedModel = 'gemini-2.5-flash'; // Substituição custo-eficiente para modelos depreciados
+        resolvedModel = 'gemini-3.6-flash'; // Substituição custo-eficiente para modelos depreciados
     }
 
     return {

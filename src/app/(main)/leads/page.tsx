@@ -16,6 +16,8 @@ const LeadModal = nextDynamic(() => import('@/components/dashboard/leads/LeadMod
 const LeadBulkImportModal = nextDynamic(() => import('@/components/dashboard/leads/LeadBulkImportModal').then(mod => ({ default: mod.LeadBulkImportModal })), { ssr: false })
 const ClientModal = nextDynamic(() => import('@/components/dashboard/clients/ClientModal').then(mod => ({ default: mod.ClientModal })), { ssr: false })
 import { getPipelineData, deleteLead, archiveLead } from '@/app/_actions/leads'
+import { getFunnels, createFunnel, updateFunnel, deleteFunnel } from '@/app/_actions/funnels'
+import { FunnelSelector } from '@/components/dashboard/leads/FunnelSelector'
 import { getClientById } from '@/app/_actions/clients'
 import { createStage, deleteStage, duplicateStage, updateStageName, updateStageColor } from '@/app/_actions/stages'
 import { checkPlanFeatureAction } from '@/app/_actions/plan'
@@ -57,6 +59,9 @@ export default function LeadsPage() {
     const [filteredLeads, setFilteredLeads] = useState<PipelineLead[]>([])
     const [brokers, setBrokers] = useState<Broker[]>([])
     const [userRole, setUserRole] = useState<string>('user')
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+    const [funnels, setFunnels] = useState<any[]>([])
+    const [selectedFunnelId, setSelectedFunnelId] = useState<string | null>(null)
     const [searchTerm, setSearchTerm] = useState('')
     const [selectedBroker, setSelectedBroker] = useState('all')
     const [editingLead, setEditingLead] = useState<Partial<PipelineLead> | null>(null)
@@ -69,20 +74,33 @@ export default function LeadsPage() {
     const searchParams = useSearchParams()
     const leadIdFromUrl = searchParams.get('id')
 
-    const fetchData = async () => {
+    const fetchData = async (funnelIdToFetch?: string) => {
         try {
             const { profile } = await getProfile()
             if (profile?.tenant_id) {
                 setTenantId(profile.tenant_id)
                 setUserRole(profile.role)
+                setCurrentUserId(profile.id)
 
-                const [pipelineResult, brokersResult, aiAccessResult] = await Promise.all([
-                    getPipelineData(profile.tenant_id),
+                const activeFunnelId = funnelIdToFetch || selectedFunnelId || undefined;
+
+                const [pipelineResult, brokersResult, aiAccessResult, funnelsResult] = await Promise.all([
+                    getPipelineData(profile.tenant_id, activeFunnelId),
                     profile.role === 'admin' || profile.role === 'superadmin' 
                         ? getBrokers(profile.tenant_id) 
                         : Promise.resolve({ success: true, data: [] }),
-                    checkPlanFeatureAction(profile.tenant_id, 'ai')
+                    checkPlanFeatureAction(profile.tenant_id, 'ai'),
+                    getFunnels(profile.tenant_id)
                 ])
+
+                if (funnelsResult.success && funnelsResult.data) {
+                    setFunnels(funnelsResult.data)
+                    if (!activeFunnelId && funnelsResult.data.length > 0) {
+                        setSelectedFunnelId(funnelsResult.data[0].id)
+                    } else if (activeFunnelId) {
+                        setSelectedFunnelId(activeFunnelId)
+                    }
+                }
 
                 if (pipelineResult.success && pipelineResult.data) {
                     setStages((pipelineResult.data.stages || []) as Stage[])
@@ -148,7 +166,7 @@ export default function LeadsPage() {
             toast.success('Estágio criado com sucesso!')
             setNewStageName('')
             setIsStageModalOpen(false)
-            fetchData()
+            fetchData(selectedFunnelId || undefined)
         } else {
             toast.error('Erro ao criar estágio')
         }
@@ -165,7 +183,7 @@ export default function LeadsPage() {
         const result = await deleteLead(leadId)
         if (result.success) {
             toast.success('Lead excluído com sucesso!')
-            fetchData()
+            fetchData(selectedFunnelId || undefined)
         } else {
             toast.error('Erro ao excluir lead: ' + result.error)
         }
@@ -177,7 +195,7 @@ export default function LeadsPage() {
         const result = await archiveLead(leadId)
         if (result.success) {
             toast.success('Lead arquivado com sucesso!')
-            fetchData()
+            fetchData(selectedFunnelId || undefined)
         } else {
             toast.error('Erro ao arquivar lead: ' + result.error)
         }
@@ -212,7 +230,7 @@ export default function LeadsPage() {
         const result = await updateStageName(stageId, newName)
         if (result.success) {
             toast.success('Estágio renomeado com sucesso!')
-            fetchData()
+            fetchData(selectedFunnelId || undefined)
         } else {
             toast.error('Erro ao renomear estágio: ' + result.error)
         }
@@ -224,7 +242,7 @@ export default function LeadsPage() {
         const result = await deleteStage(stageId)
         if (result.success) {
             toast.success('Estágio excluído com sucesso!')
-            fetchData()
+            fetchData(selectedFunnelId || undefined)
         } else {
             toast.error('Erro ao excluir estágio: ' + result.error)
         }
@@ -236,7 +254,7 @@ export default function LeadsPage() {
         const result = await duplicateStage(tenantId, stageId)
         if (result.success) {
             toast.success('Estágio duplicado com sucesso!')
-            fetchData()
+            fetchData(selectedFunnelId || undefined)
         } else {
             toast.error('Erro ao duplicar estágio: ' + result.error)
         }
@@ -246,7 +264,7 @@ export default function LeadsPage() {
         const result = await updateStageColor(stageId, color)
         if (result.success) {
             toast.success('Cor atualizada!')
-            fetchData()
+            fetchData(selectedFunnelId || undefined)
         } else {
             toast.error('Erro ao atualizar cor: ' + result.error)
         }
@@ -301,6 +319,37 @@ export default function LeadsPage() {
             </PageHeader>
 
             <hr className="hidden md:block border-border -mt-2" />
+
+            <div className="flex w-full">
+                <FunnelSelector 
+                    funnels={funnels}
+                    selectedFunnelId={selectedFunnelId}
+                    currentUserId={currentUserId}
+                    onSelect={(id) => fetchData(id)}
+                    onCreate={async (name) => {
+                        if (!tenantId) return { success: false, error: 'Sem tenant' };
+                        const result = await createFunnel(tenantId, name);
+                        if (result.success) {
+                            await fetchData(result.data.id);
+                        }
+                        return result;
+                    }}
+                    onEdit={async (id, data) => {
+                        const result = await updateFunnel(id, data);
+                        if (result.success) await fetchData(selectedFunnelId || undefined);
+                        return result;
+                    }}
+                    onDelete={async (id) => {
+                        if (!tenantId) return { success: false, error: 'Sem tenant' };
+                        const result = await deleteFunnel(tenantId, id);
+                        if (result.success) {
+                            setSelectedFunnelId(null);
+                            await fetchData(); // Vai pegar o primeiro disponível
+                        }
+                        return result;
+                    }}
+                />
+            </div>
 
             {viewMode === 'pipeline' ? (
                 <PipelineBoard
