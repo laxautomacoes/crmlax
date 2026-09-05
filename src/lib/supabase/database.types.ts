@@ -1099,6 +1099,9 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "followup_sequences"
             referencedColumns: ["id"]
+          },
+        ]
+      }
       funnels: {
         Row: {
           allowed_sources: string[] | null
@@ -1433,6 +1436,7 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
       lead_stages: {
         Row: {
           color: string | null

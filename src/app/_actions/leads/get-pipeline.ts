@@ -102,7 +102,7 @@ export async function getPipelineData(tenantId: string, funnelId?: string) {
     }
 
     let actualFunnelId = funnelId;
-    let stagesData: any[] | null = null;
+    let stagesData: any[] = [];
 
     // Tenta buscar o funil — se a tabela não existir ainda (pré-migração), usa fallback
     if (!actualFunnelId) {
