@@ -132,13 +132,10 @@ export async function updatePlanAIProvider(planType: string, provider: 'gemini' 
 
     if (profile?.role !== 'superadmin') return { error: "Sem permissão" };
 
-    const updateData: any = { ai_provider: provider };
-    if (model) updateData.ai_model = model;
-
     const adminClient = createAdminClient();
     const { error, count } = await adminClient
         .from('plan_limits')
-        .update(updateData, { count: 'exact' })
+        .update(model ? { ai_provider: provider, ai_model: model } : { ai_provider: provider }, { count: 'exact' })
         .eq('plan_type', planType);
 
     if (error) return { error: error.message };
