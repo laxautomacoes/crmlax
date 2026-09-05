@@ -76,3 +76,15 @@ export function PortalIcon({ size = 20, className, ...props }: IconProps) {
         </svg>
     );
 }
+
+/** RD Station CRM — logo / marca oficial */
+export function RDStationIcon({ size = 20, className, ...props }: IconProps) {
+    return (
+        <svg viewBox="0 0 24 24" width={size} height={size} fill="none" className={className} {...props}>
+            <rect width="24" height="24" rx="5" fill="#0082FF" />
+            <path d="M6.5 6.5H12C14.2 6.5 16 8.3 16 10.5C16 12.7 14.2 14.5 12 14.5H9.5V17.5H6.5V6.5ZM9.5 9.2V11.8H12C12.7 11.8 13.3 11.2 13.3 10.5C13.3 9.8 12.7 9.2 12 9.2H9.5Z" fill="white" />
+            <path d="M12.5 13L16.8 17.5H13.2L10 14H12.5Z" fill="white" />
+        </svg>
+    );
+}
+

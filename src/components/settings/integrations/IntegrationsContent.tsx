@@ -2,6 +2,7 @@
 
 import { WhatsAppCard } from '@/components/settings/integrations/WhatsAppCard';
 import { IntegrationEndpointCard } from '@/components/settings/integrations/IntegrationEndpointCard';
+import { RDStationCard } from '@/components/settings/integrations/RDStationCard';
 import { MarketDataCard } from '@/components/settings/integrations/MarketDataCard';
 import { NewsFeedCard } from '@/components/settings/integrations/NewsFeedCard';
 import { GatewayCard } from '@/components/settings/integrations/GatewayCard';
@@ -31,7 +32,7 @@ export function IntegrationsContent({ tenantId, slug, customDomain }: Integratio
 
             {/* SEÇÃO 2: ANÚNCIOS & PORTAIS */}
             <div className="space-y-6">
-                <h2 className="text-sm font-black text-foreground uppercase tracking-[0.2em]">Anúncios & Portais</h2>
+                <h2 className="text-sm font-black text-foreground uppercase tracking-[0.2em]">Anúncios, Portais & CRM</h2>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
                     <IntegrationEndpointCard 
@@ -64,6 +65,7 @@ export function IntegrationsContent({ tenantId, slug, customDomain }: Integratio
                         slug={slug}
                         customDomain={customDomain}
                     />
+                    <RDStationCard />
                 </div>
             </div>
 

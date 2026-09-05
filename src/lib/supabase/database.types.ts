@@ -439,6 +439,7 @@ export type Database = {
           tags: Json | null
           tenant_id: string | null
           videos: Json | null
+          rd_station_id: string | null
         }
         Insert: {
           address_city?: string | null
@@ -506,6 +507,7 @@ export type Database = {
           tags?: Json | null
           tenant_id?: string | null
           videos?: Json | null
+          rd_station_id?: string | null
         }
         Update: {
           address_city?: string | null
@@ -573,6 +575,7 @@ export type Database = {
           tags?: Json | null
           tenant_id?: string | null
           videos?: Json | null
+          rd_station_id?: string | null
         }
         Relationships: [
           {
@@ -1516,6 +1519,7 @@ export type Database = {
           partner_id: string | null
           partner_split: number | null
           partner_role: string | null
+          rd_station_id: string | null
         }
         Insert: {
           assigned_to?: string | null
@@ -1550,6 +1554,7 @@ export type Database = {
           partner_id?: string | null
           partner_split?: number | null
           partner_role?: string | null
+          rd_station_id?: string | null
         }
         Update: {
           assigned_to?: string | null
@@ -1584,6 +1589,7 @@ export type Database = {
           partner_id?: string | null
           partner_split?: number | null
           partner_role?: string | null
+          rd_station_id?: string | null
         }
         Relationships: [
           {
