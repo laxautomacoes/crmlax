@@ -1276,6 +1276,9 @@ export function LeadModal({
                                                         }
                                                     }}
                                                     options={[
+                                                        ...(leadData.campaign && !campaigns.includes(leadData.campaign)
+                                                            ? [{ value: leadData.campaign, label: leadData.campaign, isCustom: false }]
+                                                            : []),
                                                         ...campaigns.map(c => {
                                                             const rawMatch = campaignsRaw.find(r => r.name === c)
                                                             return {

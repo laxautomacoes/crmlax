@@ -1,9 +1,10 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 
-interface SyncResult {
+export interface SyncResult {
     imported: number;
     updated: number;
     skipped: number;
+    notes_synced?: number;
 }
 
 export async function fetchRDStationDealsPage(token: string, page = 1, limit = 200) {
@@ -15,10 +16,30 @@ export async function fetchRDStationDealsPage(token: string, page = 1, limit = 2
     return res.json();
 }
 
+export async function fetchRDStationDealStages(token: string) {
+    try {
+        const url = `https://crm.rdstation.com/api/v1/deal_stages?token=${encodeURIComponent(token)}&limit=100`;
+        const res = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return (data.deal_stages || []) as Array<{
+            _id: string;
+            name: string;
+            order?: number;
+            deal_pipeline?: { id: string; name: string };
+        }>;
+    } catch (err) {
+        console.warn('[RD Station] Erro ao buscar deal_stages:', err);
+        return [];
+    }
+}
+
 export async function processRDStationBatch(
     tenantId: string,
     profileId: string,
+    stagesMap: Map<string, string>,
     defaultStageId: string | null,
+    targetFunnelId: string | null,
     deals: any[]
 ): Promise<SyncResult> {
     const supabase = createAdminClient();
@@ -60,7 +81,39 @@ export async function processRDStationBatch(
             continue;
         }
 
-        // 2. Verificar se já existe lead pelo rd_station_id
+        // 2. Mapeamento preciso do estágio da negociação
+        const rdStageName = (deal.deal_stage?.name || '').trim();
+        let targetStageId: string | null = null;
+
+        if (rdStageName) {
+            const normalized = rdStageName.toLowerCase();
+            targetStageId = stagesMap.get(normalized) || null;
+
+            // Se o estágio ainda não existe e temos um targetFunnelId, criar automaticamente no funil
+            if (!targetStageId && targetFunnelId) {
+                const { data: createdStage } = await supabase
+                    .from('lead_stages')
+                    .insert({
+                        tenant_id: tenantId,
+                        funnel_id: targetFunnelId,
+                        name: rdStageName,
+                        order_index: stagesMap.size
+                    })
+                    .select('id, name')
+                    .maybeSingle();
+
+                if (createdStage) {
+                    targetStageId = createdStage.id;
+                    stagesMap.set(normalized, createdStage.id);
+                }
+            }
+        }
+
+        if (!targetStageId) {
+            targetStageId = defaultStageId;
+        }
+
+        // 3. Verificar se já existe lead pelo rd_station_id
         const { data: existingLead } = await supabase
             .from('leads')
             .select('id')
@@ -69,16 +122,43 @@ export async function processRDStationBatch(
             .maybeSingle();
 
         const sourceName = deal.deal_source?.name || 'RD Station';
+        const campaignName = deal.campaign?.name || null;
         const dealValue = Number(deal.amount_total || deal.amount_unique || 0);
 
+        // 4. Garantir que a fonte exista em lead_sources
+        if (deal.deal_source?.name) {
+            await supabase
+                .from('lead_sources')
+                .upsert({ tenant_id: tenantId, name: sourceName }, { onConflict: 'tenant_id,name' });
+        }
+
+        // 5. Garantir que a campanha exista em lead_campaigns
+        if (campaignName && sourceName) {
+            await supabase
+                .from('lead_campaigns')
+                .upsert(
+                    { tenant_id: tenantId, source_name: sourceName, name: campaignName },
+                    { onConflict: 'tenant_id,source_name,name' }
+                );
+        }
+
         if (existingLead) {
+            const updatePayload: Record<string, any> = {
+                value: dealValue,
+                valor_estimado: dealValue,
+                stage_id: targetStageId,
+                last_interaction_at: new Date().toISOString(),
+            };
+            if (campaignName) {
+                updatePayload.campaign = campaignName;
+            }
+            if (deal.deal_source?.name) {
+                updatePayload.source = sourceName;
+                updatePayload.lead_source = sourceName;
+            }
             await supabase
                 .from('leads')
-                .update({
-                    value: dealValue,
-                    valor_estimado: dealValue,
-                    last_interaction_at: new Date().toISOString(),
-                })
+                .update(updatePayload)
                 .eq('id', existingLead.id);
             updated++;
         } else {
@@ -88,15 +168,19 @@ export async function processRDStationBatch(
                     tenant_id: tenantId,
                     contact_id: contactId,
                     assigned_to: profileId,
-                    stage_id: defaultStageId,
+                    stage_id: targetStageId,
                     status: 'new',
                     source: sourceName,
                     lead_source: sourceName,
+                    campaign: campaignName,
                     rd_station_id: dealId,
                     value: dealValue,
                     valor_estimado: dealValue,
                     date: new Date().toISOString().split('T')[0],
-                    utm_data: deal.deal_source ? { rd_source: deal.deal_source } : {},
+                    utm_data: {
+                        ...(deal.deal_source ? { rd_source: deal.deal_source } : {}),
+                        ...(deal.campaign ? { rd_campaign: deal.campaign } : {}),
+                    },
                 });
             imported++;
         }
@@ -105,19 +189,171 @@ export async function processRDStationBatch(
     return { imported, updated, skipped };
 }
 
-export async function runFullRDStationSync(tenantId: string, profileId: string, token: string): Promise<SyncResult> {
+export async function runFullRDStationSync(
+    tenantId: string,
+    profileId: string,
+    token: string,
+    targetFunnelId?: string | null
+): Promise<SyncResult> {
     const supabase = createAdminClient();
 
-    // Obter estágio padrão "Novo" do funil principal
-    const { data: defaultStage } = await supabase
-        .from('lead_stages')
-        .select('id')
-        .eq('tenant_id', tenantId)
-        .order('order_index', { ascending: true })
-        .limit(1)
-        .maybeSingle();
+    // 1. Buscar estágios existentes no RD Station CRM via API
+    const apiStages = await fetchRDStationDealStages(token);
 
-    const defaultStageId = defaultStage?.id || null;
+    let activeFunnelId: string | null = null;
+    const isAutoMode = !targetFunnelId || targetFunnelId === 'auto';
+
+    if (isAutoMode) {
+        // Modo Automático: Buscar ou criar o funil "RD Station"
+        let { data: rdFunnel } = await supabase
+            .from('funnels')
+            .select('id, name')
+            .eq('tenant_id', tenantId)
+            .ilike('name', 'RD Station')
+            .maybeSingle();
+
+        if (!rdFunnel) {
+            // Checar limites do plano antes de criar o funil
+            const { data: tenant } = await supabase
+                .from('tenants')
+                .select('plan_type')
+                .eq('id', tenantId)
+                .maybeSingle();
+
+            let maxFunnels = 10;
+            if (tenant?.plan_type) {
+                const { data: planLimit } = await supabase
+                    .from('plan_limits')
+                    .select('max_funnels')
+                    .eq('plan_type', tenant.plan_type)
+                    .maybeSingle();
+                if (planLimit?.max_funnels) maxFunnels = planLimit.max_funnels;
+            }
+
+            const { count: currentFunnelsCount } = await supabase
+                .from('funnels')
+                .select('*', { count: 'exact', head: true })
+                .eq('tenant_id', tenantId);
+
+            if ((currentFunnelsCount || 0) < maxFunnels) {
+                const { data: lastFunnel } = await supabase
+                    .from('funnels')
+                    .select('order_index')
+                    .eq('tenant_id', tenantId)
+                    .order('order_index', { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+
+                const nextOrder = (lastFunnel?.order_index ?? -1) + 1;
+                const { data: newFunnel } = await supabase
+                    .from('funnels')
+                    .insert({
+                        tenant_id: tenantId,
+                        name: 'RD Station',
+                        order_index: nextOrder,
+                    })
+                    .select('id, name')
+                    .maybeSingle();
+
+                rdFunnel = newFunnel;
+            }
+        }
+
+        // Fallback para o funil padrão se não foi possível criar o funil RD Station
+        if (!rdFunnel) {
+            const { data: defaultFunnel } = await supabase
+                .from('funnels')
+                .select('id, name')
+                .eq('tenant_id', tenantId)
+                .order('order_index', { ascending: true })
+                .limit(1)
+                .maybeSingle();
+            rdFunnel = defaultFunnel;
+        }
+
+        activeFunnelId = rdFunnel?.id || null;
+    } else {
+        activeFunnelId = targetFunnelId;
+    }
+
+    // 2. Mapear e provisionar estágios do funil ativo
+    const stagesMap = new Map<string, string>(); // lowercase name -> id
+    let defaultStageId: string | null = null;
+
+    if (activeFunnelId) {
+        const { data: existingStages } = await supabase
+            .from('lead_stages')
+            .select('id, name, order_index')
+            .eq('tenant_id', tenantId)
+            .eq('funnel_id', activeFunnelId)
+            .order('order_index', { ascending: true });
+
+        const stagesList = [...(existingStages || [])];
+
+        // Se houver estágios do RD Station que ainda não existem no funil, criá-los na ordem exata
+        if (apiStages.length > 0) {
+            const sortedApiStages = [...apiStages].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+            for (let idx = 0; idx < sortedApiStages.length; idx++) {
+                const apiStage = sortedApiStages[idx];
+                const cleanName = apiStage.name?.trim();
+                if (!cleanName) continue;
+
+                const alreadyExists = stagesList.some(s => s.name.trim().toLowerCase() === cleanName.toLowerCase());
+                if (!alreadyExists) {
+                    const { data: createdStage } = await supabase
+                        .from('lead_stages')
+                        .insert({
+                            tenant_id: tenantId,
+                            funnel_id: activeFunnelId,
+                            name: cleanName,
+                            order_index: typeof apiStage.order === 'number' ? apiStage.order : stagesList.length,
+                        })
+                        .select('id, name, order_index')
+                        .maybeSingle();
+
+                    if (createdStage) stagesList.push(createdStage);
+                }
+            }
+        }
+
+        // Se o funil ativo ainda não tem estágios, criar um estágio padrão "Novo"
+        if (stagesList.length === 0 && activeFunnelId) {
+            const { data: createdDefault } = await supabase
+                .from('lead_stages')
+                .insert({
+                    tenant_id: tenantId,
+                    funnel_id: activeFunnelId,
+                    name: 'Novo',
+                    order_index: 0,
+                })
+                .select('id, name, order_index')
+                .maybeSingle();
+
+            if (createdDefault) stagesList.push(createdDefault);
+        }
+
+        stagesList.forEach((s, idx) => {
+            stagesMap.set(s.name.trim().toLowerCase(), s.id);
+            if (idx === 0) defaultStageId = s.id;
+        });
+    }
+
+    // Fallback final: se ainda não temos defaultStageId, buscar dentro do funil ativo (nunca de outro funil)
+    if (!defaultStageId && activeFunnelId) {
+        const { data: fallbackStage } = await supabase
+            .from('lead_stages')
+            .select('id')
+            .eq('tenant_id', tenantId)
+            .eq('funnel_id', activeFunnelId)
+            .order('order_index', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+        defaultStageId = fallbackStage?.id || null;
+    }
+
+    // 3. Processar lotes de negócios da API
     let page = 1;
     let hasMore = true;
     let totalImported = 0;
@@ -129,7 +365,14 @@ export async function runFullRDStationSync(tenantId: string, profileId: string, 
         const deals = data.deals || [];
         if (deals.length === 0) break;
 
-        const batchRes = await processRDStationBatch(tenantId, profileId, defaultStageId, deals);
+        const batchRes = await processRDStationBatch(
+            tenantId,
+            profileId,
+            stagesMap,
+            defaultStageId,
+            activeFunnelId,
+            deals
+        );
         totalImported += batchRes.imported;
         totalUpdated += batchRes.updated;
         totalSkipped += batchRes.skipped;
@@ -138,5 +381,119 @@ export async function runFullRDStationSync(tenantId: string, profileId: string, 
         page++;
     }
 
-    return { imported: totalImported, updated: totalUpdated, skipped: totalSkipped };
+    // 4. Sincronizar as anotações manuais do histórico do RD Station em "Notas"
+    let notesSynced = 0;
+    try {
+        const notesRes = await syncRDStationNotes(tenantId, token, profileId);
+        notesSynced = notesRes.synced;
+    } catch (notesErr) {
+        console.warn('[RD Station] Erro ao sincronizar anotações:', notesErr);
+    }
+
+    return { imported: totalImported, updated: totalUpdated, skipped: totalSkipped, notes_synced: notesSynced };
 }
+
+export async function fetchRDStationActivitiesPage(token: string, page = 1, limit = 200) {
+    const url = `https://crm.rdstation.com/api/v1/activities?token=${encodeURIComponent(token)}&page=${page}&limit=${limit}`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+        throw new Error(`Erro na API do RD Station (activities): HTTP ${res.status}`);
+    }
+    return res.json();
+}
+
+export async function syncRDStationNotes(
+    tenantId: string,
+    token: string,
+    fallbackProfileId?: string
+): Promise<{ synced: number }> {
+    const supabase = createAdminClient();
+
+    // 1. Mapear leads do tenant vinculados ao RD Station
+    const { data: leads } = await supabase
+        .from('leads')
+        .select('id, contact_id, assigned_to, rd_station_id')
+        .eq('tenant_id', tenantId)
+        .not('rd_station_id', 'is', null);
+
+    if (!leads || leads.length === 0) return { synced: 0 };
+
+    const leadMap = new Map<string, { id: string; contact_id: string | null; assigned_to: string | null }>();
+    for (const l of leads) {
+        if (l.rd_station_id) {
+            leadMap.set(l.rd_station_id, {
+                id: l.id,
+                contact_id: l.contact_id,
+                assigned_to: l.assigned_to,
+            });
+        }
+    }
+
+    let defaultProfileId = fallbackProfileId || '';
+    if (!defaultProfileId) {
+        const { data: firstProfile } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('tenant_id', tenantId)
+            .limit(1)
+            .maybeSingle();
+        defaultProfileId = firstProfile?.id || '';
+    }
+
+    // 2. Buscar anotações manuais paginadas do RD Station
+    let page = 1;
+    let hasMore = true;
+    let totalSynced = 0;
+
+    while (hasMore && page <= 30) {
+        try {
+            const data = await fetchRDStationActivitiesPage(token, page, 200);
+            const activities = data.activities || [];
+            if (activities.length === 0) break;
+
+            for (const act of activities) {
+                const dealId = act.deal_id;
+                if (!dealId) continue;
+
+                const lead = leadMap.get(dealId);
+                if (!lead) continue;
+
+                const targetProfileId = lead.assigned_to || defaultProfileId;
+                if (!targetProfileId) continue;
+
+                const actId = act.id || act._id;
+                const text = (act.text || '').trim();
+                if (!text) continue;
+
+                const dateStr = act.date || new Date().toISOString();
+                const dateOnly = dateStr.substring(0, 10);
+
+                const { error } = await supabase
+                    .from('notes')
+                    .upsert({
+                        tenant_id: tenantId,
+                        lead_id: lead.id,
+                        contact_id: lead.contact_id,
+                        profile_id: targetProfileId,
+                        content: text,
+                        date: dateOnly,
+                        created_at: dateStr,
+                        rd_station_id: actId,
+                    }, { onConflict: 'tenant_id,rd_station_id' });
+
+                if (!error) {
+                    totalSynced++;
+                }
+            }
+
+            hasMore = Boolean(data.has_more);
+            page++;
+        } catch (err) {
+            console.warn(`[RD Station] Erro ao buscar atividades página ${page}:`, err);
+            break;
+        }
+    }
+
+    return { synced: totalSynced };
+}
+

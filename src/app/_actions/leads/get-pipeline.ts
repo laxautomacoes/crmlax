@@ -106,20 +106,24 @@ export async function getPipelineData(tenantId: string, funnelId?: string) {
 
     // Tenta buscar o funil — se a tabela não existir ainda (pré-migração), usa fallback
     if (!actualFunnelId) {
-        try {
-            const { data: firstFunnel, error: funnelError } = await supabase
-                .from('funnels')
-                .select('id')
-                .eq('tenant_id', tenantId)
-                .order('order_index', { ascending: true })
-                .limit(1)
-                .single();
-            
-            if (!funnelError && firstFunnel) {
-                actualFunnelId = firstFunnel.id;
+        if (profile?.default_funnel_id) {
+            actualFunnelId = profile.default_funnel_id;
+        } else {
+            try {
+                const { data: firstFunnel, error: funnelError } = await supabase
+                    .from('funnels')
+                    .select('id')
+                    .eq('tenant_id', tenantId)
+                    .order('order_index', { ascending: true })
+                    .limit(1)
+                    .single();
+                
+                if (!funnelError && firstFunnel) {
+                    actualFunnelId = firstFunnel.id;
+                }
+            } catch {
+                // Tabela funnels não existe ainda — prosseguir sem funnel_id
             }
-        } catch {
-            // Tabela funnels não existe ainda — prosseguir sem funnel_id
         }
     }
 

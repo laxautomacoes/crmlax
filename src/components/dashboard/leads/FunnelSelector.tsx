@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Edit2, Trash2, MoreVertical, LayoutGrid, ChevronDown } from 'lucide-react'
+import { Plus, Edit2, Trash2, MoreVertical, LayoutGrid, ChevronDown, Star } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Modal } from '@/components/shared/Modal'
 import { FormInput } from '@/components/shared/forms/FormInput'
@@ -18,14 +18,16 @@ interface Funnel {
 interface FunnelSelectorProps {
     funnels: Funnel[]
     selectedFunnelId: string | null
+    preferredFunnelId?: string | null
     currentUserId?: string | null
     onSelect: (id: string) => void
+    onSetPreferred?: (id: string | null) => Promise<void> | void
     onCreate: (name: string) => Promise<{ success: boolean; error?: string; limitReached?: boolean }>
     onEdit: (id: string, data: { name: string; allowed_sources: string[]; owner_user_id: string | null }) => Promise<{ success: boolean; error?: string }>
     onDelete: (id: string) => Promise<{ success: boolean; error?: string }>
 }
 
-export function FunnelSelector({ funnels, selectedFunnelId, currentUserId, onSelect, onCreate, onEdit, onDelete }: FunnelSelectorProps) {
+export function FunnelSelector({ funnels, selectedFunnelId, preferredFunnelId, currentUserId, onSelect, onSetPreferred, onCreate, onEdit, onDelete }: FunnelSelectorProps) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
@@ -33,6 +35,7 @@ export function FunnelSelector({ funnels, selectedFunnelId, currentUserId, onSel
     const [editingFunnel, setEditingFunnel] = useState<Funnel | null>(null)
     const [editSources, setEditSources] = useState('')
     const [editIsPersonal, setEditIsPersonal] = useState(false)
+    const [editIsPreferred, setEditIsPreferred] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)
 
     const handleCreate = async () => {
@@ -67,6 +70,16 @@ export function FunnelSelector({ funnels, selectedFunnelId, currentUserId, onSel
             allowed_sources: sourcesArray,
             owner_user_id: editIsPersonal && currentUserId ? currentUserId : null,
         })
+
+        if (onSetPreferred && editingFunnel) {
+            const wasPreferred = preferredFunnelId === editingFunnel.id
+            if (editIsPreferred && !wasPreferred) {
+                await onSetPreferred(editingFunnel.id)
+            } else if (!editIsPreferred && wasPreferred) {
+                await onSetPreferred(null)
+            }
+        }
+
         setIsSubmitting(false)
 
         if (result.success) {
@@ -104,10 +117,12 @@ export function FunnelSelector({ funnels, selectedFunnelId, currentUserId, onSel
         setEditingFunnel(funnel)
         setEditSources((funnel.allowed_sources || []).join(', '))
         setEditIsPersonal(!!funnel.owner_user_id)
+        setEditIsPreferred(preferredFunnelId === funnel.id)
         setIsEditModalOpen(true)
     }
 
     const selectedFunnel = funnels.find(f => f.id === selectedFunnelId)
+    const isCurrentPreferred = selectedFunnel && selectedFunnel.id === preferredFunnelId
 
     return (
         <div className="flex items-center gap-2 mb-4 bg-card border border-border p-1.5 rounded-lg shadow-sm w-fit">
@@ -124,20 +139,35 @@ export function FunnelSelector({ funnels, selectedFunnelId, currentUserId, onSel
                     <option value="" disabled>Selecione um funil</option>
                     {funnels.map(funnel => (
                         <option key={funnel.id} value={funnel.id}>
-                            {funnel.name}
+                            {funnel.name}{funnel.id === preferredFunnelId ? ' ★' : ''}
                         </option>
                     ))}
                 </select>
                 <ChevronDown size={14} className="absolute right-2 text-muted-foreground pointer-events-none" />
             </div>
 
+            {isCurrentPreferred && (
+                <div title="Funil preferido — abre primeiro ao carregar a página" className="flex items-center text-amber-500 pr-1">
+                    <Star size={14} className="fill-amber-400 text-amber-400 shrink-0" />
+                </div>
+            )}
+
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                    <button type="button" className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                    <button type="button" className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Opções do funil">
                         <MoreVertical size={16} />
                     </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuContent align="end" className="w-52">
+                    {selectedFunnel && onSetPreferred && (
+                        <DropdownMenuItem 
+                            onClick={() => onSetPreferred(isCurrentPreferred ? null : selectedFunnel.id)} 
+                            className="cursor-pointer gap-2"
+                        >
+                            <Star size={16} className={isCurrentPreferred ? "fill-amber-400 text-amber-400" : "text-muted-foreground"} />
+                            {isCurrentPreferred ? 'Remover dos preferidos' : 'Definir como preferido'}
+                        </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem onClick={() => setIsCreateModalOpen(true)} className="cursor-pointer gap-2">
                         <Plus size={16} />
                         Criar novo funil
@@ -256,6 +286,36 @@ export function FunnelSelector({ funnels, selectedFunnelId, currentUserId, onSel
                             </span>
                         </label>
                     </div>
+
+                    {/* Seção 4: Funil Preferido */}
+                    {onSetPreferred && (
+                        <div className="space-y-4 pt-8 border-t border-border/50">
+                            <div>
+                                <h3 className="text-sm font-bold text-foreground uppercase tracking-widest">
+                                    Funil Preferido
+                                </h3>
+                                <p className="text-xs text-muted-foreground leading-snug mt-1">
+                                    <span className="block">Ao ativar, este funil será aberto automaticamente em primeiro lugar ao carregar a página de Leads.</span>
+                                </p>
+                            </div>
+                            <label className="flex items-center gap-3 cursor-pointer select-none group">
+                                <div className="relative">
+                                    <input
+                                        type="checkbox"
+                                        checked={editIsPreferred}
+                                        onChange={(e) => setEditIsPreferred(e.target.checked)}
+                                        disabled={isSubmitting}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-10 h-5 bg-muted rounded-full peer-checked:bg-[#404F4F] dark:peer-checked:bg-secondary transition-colors" />
+                                    <div className="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5" />
+                                </div>
+                                <span className="text-sm font-medium text-foreground">
+                                    {editIsPreferred ? 'Funil preferido ativado — abre primeiro ao carregar' : 'Desativado — não é o funil preferido'}
+                                </span>
+                            </label>
+                        </div>
+                    )}
 
                     {/* Rodapé */}
                     <div className="flex justify-end gap-2 pt-4 border-t border-border/50">

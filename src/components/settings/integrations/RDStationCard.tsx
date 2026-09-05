@@ -16,6 +16,7 @@ export function RDStationCard() {
     const [status, setStatus] = useState<'active' | 'inactive'>('inactive');
     const [token, setToken] = useState('');
     const [settings, setSettings] = useState<any>({});
+    const [funnels, setFunnels] = useState<Array<{ id: string; name: string }>>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
 
@@ -26,6 +27,9 @@ export function RDStationCard() {
                 setStatus(res.data.status === 'active' ? 'active' : 'inactive');
                 setToken(res.data.credentials?.token || '');
                 setSettings(res.data.settings || {});
+            }
+            if (res.funnels) {
+                setFunnels(res.funnels);
             }
         } catch (err) {
             console.error('Erro ao carregar RD Station:', err);
@@ -38,15 +42,15 @@ export function RDStationCard() {
         loadConfig();
     }, []);
 
-    const handleSaveToken = async (newToken: string) => {
-        const res = await saveRDStationToken(newToken);
+    const handleSaveToken = async (newToken: string, newTargetFunnelId?: string | null) => {
+        const res = await saveRDStationToken(newToken, newTargetFunnelId);
         if (res.success) {
             setToken(newToken);
             setStatus('active');
             await loadConfig();
             return true;
         }
-        toast.error('Erro ao salvar token: ' + res.error);
+        toast.error('Erro ao salvar configurações: ' + res.error);
         return false;
     };
 
@@ -86,6 +90,10 @@ export function RDStationCard() {
         );
     }
 
+    const isAuto = !settings?.target_funnel_id || settings?.target_funnel_id === 'auto';
+    const targetFunnel = funnels.find((f) => f.id === settings?.target_funnel_id);
+    const funnelLabel = isAuto ? 'Funil RD Station (Auto)' : (targetFunnel ? targetFunnel.name : 'Funil Padrão');
+
     return (
         <>
             <div
@@ -108,7 +116,7 @@ export function RDStationCard() {
                     </div>
 
                     <div className="pt-2 border-t border-border/40 flex items-center justify-between text-[10px] text-muted-foreground">
-                        <span>{status === 'active' ? 'Ativo' : 'Desativado'}</span>
+                        <span className="truncate max-w-[130px]" title={funnelLabel}>{funnelLabel}</span>
                         <span>{settings?.last_sync_imported ? `${settings.last_sync_imported} importados` : 'Pronto para sync'}</span>
                     </div>
                 </div>
@@ -120,6 +128,7 @@ export function RDStationCard() {
                 status={status}
                 savedToken={token}
                 settings={settings}
+                funnels={funnels}
                 onSaveToken={handleSaveToken}
                 onToggleStatus={handleToggleStatus}
                 onSync={handleSync}

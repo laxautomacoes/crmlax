@@ -1715,6 +1715,7 @@ export type Database = {
           updated_at: string
           visit_number: number | null
           visit_unregistered_property: string | null
+          rd_station_id: string | null
         }
         Insert: {
           attachments?: Json | null
@@ -1731,6 +1732,7 @@ export type Database = {
           updated_at?: string
           visit_number?: number | null
           visit_unregistered_property?: string | null
+          rd_station_id?: string | null
         }
         Update: {
           attachments?: Json | null
@@ -1747,6 +1749,7 @@ export type Database = {
           updated_at?: string
           visit_number?: number | null
           visit_unregistered_property?: string | null
+          rd_station_id?: string | null
         }
         Relationships: [
           {
@@ -2013,6 +2016,7 @@ export type Database = {
           whatsapp_instance_name: string | null
           whatsapp_number: string | null
           whatsapp_status: string | null
+          default_funnel_id: string | null
         }
         Insert: {
           avatar_url?: string | null
@@ -2030,6 +2034,7 @@ export type Database = {
           whatsapp_instance_name?: string | null
           whatsapp_number?: string | null
           whatsapp_status?: string | null
+          default_funnel_id?: string | null
         }
         Update: {
           avatar_url?: string | null
@@ -2047,6 +2052,7 @@ export type Database = {
           whatsapp_instance_name?: string | null
           whatsapp_number?: string | null
           whatsapp_status?: string | null
+          default_funnel_id?: string | null
         }
         Relationships: [
           {

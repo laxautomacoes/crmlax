@@ -8,7 +8,7 @@ import { runFullRDStationSync } from '@/services/rd-station-service';
 export async function getRDStationConfig() {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return { data: null, error: 'Não autenticado' };
+    if (!user) return { data: null, funnels: [], error: 'Não autenticado' };
 
     const { data: profile } = await supabase
         .from('profiles')
@@ -16,19 +16,30 @@ export async function getRDStationConfig() {
         .eq('id', user.id)
         .single();
 
-    if (!profile?.tenant_id) return { data: null, error: 'Perfil não encontrado' };
+    if (!profile?.tenant_id) return { data: null, funnels: [], error: 'Perfil não encontrado' };
 
-    const { data, error } = await supabase
-        .from('integrations')
-        .select('*')
-        .eq('tenant_id', profile.tenant_id)
-        .eq('provider', 'rd_station')
-        .maybeSingle();
+    const [integrationRes, funnelsRes] = await Promise.all([
+        supabase
+            .from('integrations')
+            .select('*')
+            .eq('tenant_id', profile.tenant_id)
+            .eq('provider', 'rd_station')
+            .maybeSingle(),
+        supabase
+            .from('funnels')
+            .select('id, name')
+            .eq('tenant_id', profile.tenant_id)
+            .order('order_index', { ascending: true })
+    ]);
 
-    return { data, error: error?.message };
+    return {
+        data: integrationRes.data,
+        funnels: (funnelsRes.data || []) as Array<{ id: string; name: string }>,
+        error: integrationRes.error?.message || funnelsRes.error?.message
+    };
 }
 
-export async function saveRDStationToken(token: string) {
+export async function saveRDStationToken(token: string, targetFunnelId?: string | null) {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { success: false, error: 'Não autenticado' };
@@ -49,6 +60,9 @@ export async function saveRDStationToken(token: string) {
         .maybeSingle();
 
     const currentSettings = (existing?.settings as Record<string, any>) || {};
+    if (targetFunnelId !== undefined) {
+        currentSettings.target_funnel_id = targetFunnelId || null;
+    }
 
     const admin = createAdminClient();
     const { error } = await admin
@@ -97,7 +111,7 @@ export async function toggleRDStationStatus(status: 'active' | 'inactive') {
 }
 
 export type SyncActionResponse =
-    | { success: true; imported: number; updated: number; skipped: number }
+    | { success: true; imported: number; updated: number; skipped: number; notes_synced?: number }
     | { success: false; error: string };
 
 export async function syncRDStationAction(): Promise<SyncActionResponse> {
@@ -122,11 +136,14 @@ export async function syncRDStationAction(): Promise<SyncActionResponse> {
         .maybeSingle();
 
     const credentials = (integration?.credentials as Record<string, any>) || {};
+    const currentSettings = (integration?.settings as Record<string, any>) || {};
     const token = credentials.token;
     if (!integration || !token) return { success: false as const, error: 'Token do RD Station não configurado' };
 
+    const targetFunnelId = currentSettings.target_funnel_id || 'auto';
+
     try {
-        const syncResult = await runFullRDStationSync(profile.tenant_id, user.id, token);
+        const syncResult = await runFullRDStationSync(profile.tenant_id, user.id, token, targetFunnelId);
         const now = new Date().toISOString();
 
         const currentSettings = (integration.settings as Record<string, any>) || {};
@@ -154,6 +171,7 @@ export async function syncRDStationAction(): Promise<SyncActionResponse> {
 
         revalidatePath('/settings/integrations');
         revalidatePath('/leads');
+        revalidatePath('/notes');
 
         return { success: true as const, ...syncResult };
     } catch (err: any) {

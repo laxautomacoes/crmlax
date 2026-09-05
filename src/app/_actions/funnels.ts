@@ -179,3 +179,19 @@ export async function reorderFunnels(orderedIds: string[]) {
     revalidatePath('/leads');
     return { success: true };
 }
+
+export async function setPreferredFunnel(funnelId: string | null) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'Não autenticado' };
+
+    const { error } = await supabase
+        .from('profiles')
+        .update({ default_funnel_id: funnelId })
+        .eq('id', user.id);
+
+    if (error) return { success: false, error: error.message };
+
+    revalidatePath('/leads');
+    return { success: true };
+}

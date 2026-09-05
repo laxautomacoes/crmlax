@@ -16,7 +16,7 @@ const LeadModal = nextDynamic(() => import('@/components/dashboard/leads/LeadMod
 const LeadBulkImportModal = nextDynamic(() => import('@/components/dashboard/leads/LeadBulkImportModal').then(mod => ({ default: mod.LeadBulkImportModal })), { ssr: false })
 const ClientModal = nextDynamic(() => import('@/components/dashboard/clients/ClientModal').then(mod => ({ default: mod.ClientModal })), { ssr: false })
 import { getPipelineData, deleteLead, archiveLead } from '@/app/_actions/leads'
-import { getFunnels, createFunnel, updateFunnel, deleteFunnel } from '@/app/_actions/funnels'
+import { getFunnels, createFunnel, updateFunnel, deleteFunnel, setPreferredFunnel } from '@/app/_actions/funnels'
 import { FunnelSelector } from '@/components/dashboard/leads/FunnelSelector'
 import { getClientById } from '@/app/_actions/clients'
 import { createStage, deleteStage, duplicateStage, updateStageName, updateStageColor } from '@/app/_actions/stages'
@@ -62,6 +62,7 @@ export default function LeadsPage() {
     const [currentUserId, setCurrentUserId] = useState<string | null>(null)
     const [funnels, setFunnels] = useState<any[]>([])
     const [selectedFunnelId, setSelectedFunnelId] = useState<string | null>(null)
+    const [preferredFunnelId, setPreferredFunnelId] = useState<string | null>(null)
     const [searchTerm, setSearchTerm] = useState('')
     const [selectedBroker, setSelectedBroker] = useState('all')
     const [editingLead, setEditingLead] = useState<Partial<PipelineLead> | null>(null)
@@ -82,7 +83,12 @@ export default function LeadsPage() {
                 setUserRole(profile.role)
                 setCurrentUserId(profile.id)
 
-                const activeFunnelId = funnelIdToFetch || selectedFunnelId || undefined;
+                const userPreferred = (profile as any)?.default_funnel_id || (typeof window !== 'undefined' ? localStorage.getItem(`crm_pref_funnel_${profile.tenant_id}`) : null)
+                if (userPreferred) {
+                    setPreferredFunnelId(userPreferred)
+                }
+
+                const activeFunnelId = funnelIdToFetch || selectedFunnelId || userPreferred || undefined;
 
                 const [pipelineResult, brokersResult, aiAccessResult, funnelsResult] = await Promise.all([
                     getPipelineData(profile.tenant_id, activeFunnelId),
@@ -95,10 +101,15 @@ export default function LeadsPage() {
 
                 if (funnelsResult.success && funnelsResult.data) {
                     setFunnels(funnelsResult.data)
-                    if (!activeFunnelId && funnelsResult.data.length > 0) {
-                        setSelectedFunnelId(funnelsResult.data[0].id)
-                    } else if (activeFunnelId) {
-                        setSelectedFunnelId(activeFunnelId)
+                    const availableFunnels = funnelsResult.data
+                    if (funnelIdToFetch) {
+                        setSelectedFunnelId(funnelIdToFetch)
+                    } else if (selectedFunnelId && availableFunnels.some((f: any) => f.id === selectedFunnelId)) {
+                        setSelectedFunnelId(selectedFunnelId)
+                    } else if (userPreferred && availableFunnels.some((f: any) => f.id === userPreferred)) {
+                        setSelectedFunnelId(userPreferred)
+                    } else if (availableFunnels.length > 0) {
+                        setSelectedFunnelId(availableFunnels[0].id)
                     }
                 }
 
@@ -270,6 +281,29 @@ export default function LeadsPage() {
         }
     }
 
+    const handleSetPreferredFunnel = async (funnelId: string | null) => {
+        if (!tenantId) return
+        setPreferredFunnelId(funnelId)
+        try {
+            if (typeof window !== 'undefined') {
+                if (funnelId) {
+                    localStorage.setItem(`crm_pref_funnel_${tenantId}`, funnelId)
+                } else {
+                    localStorage.removeItem(`crm_pref_funnel_${tenantId}`)
+                }
+            }
+            const result = await setPreferredFunnel(funnelId)
+            if (result.success) {
+                toast.success(funnelId ? 'Funil definido como preferido!' : 'Funil preferido removido!')
+            } else {
+                toast.error('Erro ao salvar funil preferido: ' + (result.error || ''))
+            }
+        } catch (e: any) {
+            console.error('Erro ao definir funil preferido:', e)
+            toast.error('Erro ao definir funil preferido')
+        }
+    }
+
     return (
         <div className="max-w-[1600px] mx-auto flex flex-col gap-6 md:gap-8 animate-in fade-in slide-in-from-bottom-4 duration-300 h-[calc(100vh-120px)] md:h-[calc(100vh-100px)]">
             <PageHeader title="Leads" subtitle={`${filteredLeads.length} leads encontrados`}>
@@ -324,8 +358,13 @@ export default function LeadsPage() {
                 <FunnelSelector 
                     funnels={funnels}
                     selectedFunnelId={selectedFunnelId}
+                    preferredFunnelId={preferredFunnelId}
                     currentUserId={currentUserId}
-                    onSelect={(id) => fetchData(id)}
+                    onSelect={(id) => {
+                        setSelectedFunnelId(id)
+                        fetchData(id)
+                    }}
+                    onSetPreferred={handleSetPreferredFunnel}
                     onCreate={async (name) => {
                         if (!tenantId) return { success: false, error: 'Sem tenant' };
                         const result = await createFunnel(tenantId, name);
@@ -343,6 +382,9 @@ export default function LeadsPage() {
                         if (!tenantId) return { success: false, error: 'Sem tenant' };
                         const result = await deleteFunnel(tenantId, id);
                         if (result.success) {
+                            if (preferredFunnelId === id) {
+                                handleSetPreferredFunnel(null);
+                            }
                             setSelectedFunnelId(null);
                             await fetchData(); // Vai pegar o primeiro disponível
                         }
