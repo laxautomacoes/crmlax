@@ -159,9 +159,9 @@ export default function LeadsPage() {
     }, [leadIdFromUrl, leads])
 
     const handleNewStage = async () => {
-        if (!newStageName.trim() || !tenantId) return
+        if (!newStageName.trim() || !tenantId || !selectedFunnelId) return
 
-        const result = await createStage(tenantId, newStageName)
+        const result = await createStage(tenantId, selectedFunnelId, newStageName)
         if (result.success) {
             toast.success('Estágio criado com sucesso!')
             setNewStageName('')

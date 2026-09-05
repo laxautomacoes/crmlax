@@ -158,11 +158,8 @@ export function FunnelSelector({ funnels, selectedFunnelId, currentUserId, onSel
             </DropdownMenu>
 
             {/* Modal — Criar Funil */}
-            <Modal isOpen={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)}>
+            <Modal isOpen={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)} title="Criar Novo Funil">
                 <div className="space-y-4">
-                    <h3 className="text-base font-black text-foreground uppercase tracking-widest">
-                        Criar Novo Funil
-                    </h3>
                     <div className="flex flex-col">
                         <label className="text-xs font-bold text-foreground ml-1 mb-2">Nome do Funil</label>
                         <FormInput
@@ -194,13 +191,10 @@ export function FunnelSelector({ funnels, selectedFunnelId, currentUserId, onSel
             </Modal>
 
             {/* Modal — Editar Funil */}
-            <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)}>
+            <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="Editar Funil">
                 <div className="space-y-8">
                     {/* Seção 1: Nome */}
                     <div className="space-y-4">
-                        <h3 className="text-base font-black text-foreground uppercase tracking-widest">
-                            Editar Funil
-                        </h3>
                         <div className="flex flex-col">
                             <label className="text-xs font-bold text-foreground ml-1 mb-2">Nome do Funil</label>
                             <FormInput
@@ -286,15 +280,14 @@ export function FunnelSelector({ funnels, selectedFunnelId, currentUserId, onSel
             </Modal>
 
             {isDeleteModalOpen && (
-                <Modal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)}>
-                    <ConfirmModal
-                        title="Excluir Funil?"
-                        description={`Tem certeza que deseja excluir o funil "${selectedFunnel?.name}"? Esta ação não pode ser desfeita e afetará as etapas dentro dele.`}
-                        onConfirm={handleDelete}
-                        onCancel={() => setIsDeleteModalOpen(false)}
-                        isLoading={isSubmitting}
-                    />
-                </Modal>
+                <ConfirmModal
+                    isOpen={isDeleteModalOpen}
+                    title="Excluir Funil?"
+                    message={`Tem certeza que deseja excluir o funil "${selectedFunnel?.name}"? Esta ação não pode ser desfeita e afetará as etapas dentro dele.`}
+                    onConfirm={handleDelete}
+                    onCancel={() => setIsDeleteModalOpen(false)}
+                    isLoading={isSubmitting}
+                />
             )}
         </div>
     )
