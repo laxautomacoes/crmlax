@@ -83,6 +83,10 @@ export function FilterModal({
 
     const showCustomDates = filters.period === 'custom';
 
+    const availableStages = filters.funnelId
+        ? filterOptions.stages.filter(s => s.funnel_id === filters.funnelId)
+        : filterOptions.stages;
+
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Filtrar Dashboard">
             <div className="space-y-4 max-h-[70vh] overflow-y-auto px-1">
@@ -161,15 +165,32 @@ export function FilterModal({
                     </div>
                 )}
 
+                {/* Funil de Vendas */}
+                {filterOptions.funnels && filterOptions.funnels.length > 0 && (
+                    <FormSelect
+                        label="Funil de Vendas"
+                        value={filters.funnelId || ''}
+                        onChange={(e) => setFilters({ 
+                            ...filters, 
+                            funnelId: e.target.value,
+                            stageId: ''
+                        })}
+                        options={[
+                            { value: '', label: 'Todos os funis' },
+                            ...filterOptions.funnels.map(f => ({ value: f.id, label: f.name }))
+                        ]}
+                    />
+                )}
+
                 {/* Estágio */}
-                {filterOptions.stages.length > 0 && (
+                {availableStages.length > 0 && (
                     <FormSelect
                         label="Estágio"
                         value={filters.stageId}
                         onChange={(e) => setFilters({ ...filters, stageId: e.target.value })}
                         options={[
                             { value: '', label: 'Todos os estágios' },
-                            ...filterOptions.stages.map(s => ({ value: s.id, label: s.name }))
+                            ...availableStages.map(s => ({ value: s.id, label: s.name }))
                         ]}
                     />
                 )}

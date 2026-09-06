@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
-import { Filter, Plus } from 'lucide-react'
+import { Filter, Plus, ChevronDown } from 'lucide-react'
 import KPICards from '@/components/dashboard/KPICards'
 import SalesFunnel from '@/components/dashboard/SalesFunnel'
 import RecentLeadsList from '@/components/dashboard/RecentLeadsList'
@@ -19,13 +19,15 @@ export interface DashboardFilter {
     period: string
     startDate: string
     endDate: string
+    funnelId: string
     stageId: string
     sourceId: string
     brokerId: string
 }
 
 export interface FilterOptions {
-    stages: Array<{ id: string; name: string; color?: string | null }>
+    funnels: Array<{ id: string; name: string }>
+    stages: Array<{ id: string; name: string; color?: string | null; funnel_id?: string | null }>
     sources: Array<{ id: string; name: string }>
     members: Array<{ id: string; name: string }>
 }
@@ -34,6 +36,7 @@ const INITIAL_FILTERS: DashboardFilter = {
     period: '',
     startDate: '',
     endDate: '',
+    funnelId: '',
     stageId: '',
     sourceId: '',
     brokerId: '',
@@ -60,15 +63,55 @@ export default function DashboardClient({ metrics, roiData, profileName, tenantI
         let count = 0
         if (filters.period) count++
         if (filters.startDate || filters.endDate) count++
+        if (filters.funnelId) count++
         if (filters.stageId) count++
         if (filters.sourceId) count++
         if (filters.brokerId) count++
         return count
     }, [filters])
 
-    // Filtrar leads recentes baseado nos filtros ativos
+    // Métricas de KPI dinâmicas pelo funil selecionado
+    const currentKPIs = useMemo(() => {
+        if (!filters.funnelId) {
+            return metrics.kpis
+        }
+        const currentFunnel = (metrics.funnelsData || []).find(f => f.id === filters.funnelId)
+        if (!currentFunnel) return metrics.kpis
+
+        return {
+            leadsAtivos: currentFunnel.totalLeads,
+            leadsAtivosTrend: metrics.kpis.leadsAtivosTrend,
+            properties: metrics.kpis.properties,
+            propertiesTrend: metrics.kpis.propertiesTrend,
+            conversoes: currentFunnel.conversions,
+            conversoesTrend: metrics.kpis.conversoesTrend
+        }
+    }, [metrics.kpis, metrics.funnelsData, filters.funnelId])
+
+    // Métricas de ROI dinâmicas pelo funil selecionado
+    const currentROIData = useMemo(() => {
+        if (!filters.funnelId || !roiData.byFunnel || !roiData.byFunnel[filters.funnelId]) {
+            return roiData
+        }
+        const funnelROI = roiData.byFunnel[filters.funnelId]
+        return {
+            totalCustos: roiData.totalCustos,
+            totalReceita: funnelROI.revenue,
+            roi: funnelROI.roi,
+            cpl: funnelROI.cpl,
+            leadsCount: funnelROI.leadsCount,
+            byFunnel: roiData.byFunnel
+        }
+    }, [roiData, filters.funnelId])
+
+    // Filtrar leads recentes baseado nos filtros ativos (incluindo funil)
     const filteredRecentLeads = useMemo(() => {
         let leads = [...metrics.recentLeads]
+
+        // Filtro por funil
+        if (filters.funnelId) {
+            leads = leads.filter(lead => lead.funnel_id === filters.funnelId)
+        }
 
         // Filtro por período
         if (filters.period || (filters.startDate && filters.endDate)) {
@@ -130,17 +173,27 @@ export default function DashboardClient({ metrics, roiData, profileName, tenantI
         return leads
     }, [metrics.recentLeads, filters, filterOptions])
 
-    // Filtrar funil de vendas por estágio selecionado
+    // Filtrar passos de funil legado caso necessário
     const filteredFunnelSteps = useMemo(() => {
-        if (!filters.stageId) return metrics.funnelSteps
-        return metrics.funnelSteps.filter(step => step.stageId === filters.stageId)
-    }, [metrics.funnelSteps, filters.stageId])
+        let steps = metrics.funnelSteps
+        if (filters.funnelId) {
+            steps = steps.filter(step => step.funnelId === filters.funnelId)
+        }
+        if (filters.stageId) {
+            steps = steps.filter(step => step.stageId === filters.stageId)
+        }
+        return steps
+    }, [metrics.funnelSteps, filters.funnelId, filters.stageId])
 
     // Mapear os estágios do funil para o formato esperado pelo LeadModal
-    const stages = metrics.funnelSteps.map(step => ({
-        id: step.stageId,
-        name: step.label
-    }))
+    const availableStagesForModal = useMemo(() => {
+        if (filters.funnelId) {
+            return filterOptions.stages
+                .filter(s => s.funnel_id === filters.funnelId)
+                .map(s => ({ id: s.id, name: s.name }))
+        }
+        return filterOptions.stages.map(s => ({ id: s.id, name: s.name }))
+    }, [filterOptions.stages, filters.funnelId])
 
     const handleSuccess = () => {
         router.refresh()
@@ -155,7 +208,26 @@ export default function DashboardClient({ metrics, roiData, profileName, tenantI
 
             {/* Header / Actions Section */}
             <PageHeader title="Dashboard">
-                <div className="grid grid-cols-2 md:grid-flow-col md:auto-cols-max gap-2 md:gap-3 w-full md:w-max">
+                <div className="grid grid-cols-2 md:grid-flow-col md:auto-cols-max gap-2 md:gap-3 w-full md:w-max items-center">
+                    
+                    {/* Seletor Rápido de Funil no Cabeçalho */}
+                    {filterOptions.funnels.length > 1 && (
+                        <div className="relative col-span-2 md:col-span-1">
+                            <select
+                                value={filters.funnelId}
+                                onChange={(e) => setFilters({ ...filters, funnelId: e.target.value, stageId: '' })}
+                                className="w-full md:w-auto h-[34px] bg-card border border-muted-foreground/30 text-foreground text-xs font-bold uppercase tracking-wider rounded-lg px-3 pr-8 appearance-none cursor-pointer outline-none focus:ring-2 focus:ring-ring/50 shadow-sm hover:bg-muted/30 transition-all"
+                                title="Filtrar por Funil"
+                            >
+                                <option value="">Todos os funis</option>
+                                {filterOptions.funnels.map(f => (
+                                    <option key={f.id} value={f.id}>{f.name}</option>
+                                ))}
+                            </select>
+                            <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                        </div>
+                    )}
+
                     <button
                         onClick={() => setIsFilterOpen(true)}
                         className={`w-full md:w-auto md:min-w-[130px] h-[34px] flex items-center justify-center gap-2 px-4 border rounded-lg transition-all text-xs font-bold uppercase tracking-widest whitespace-nowrap outline-none focus:ring-2 shadow-sm relative ${
@@ -184,16 +256,22 @@ export default function DashboardClient({ metrics, roiData, profileName, tenantI
 
             <hr className="hidden md:block border-border" />
 
-            <KPICards kpis={metrics.kpis} />
+            <KPICards kpis={currentKPIs} />
 
             {/* Seção ROI - Apenas para Admins */}
             {(userRole === 'admin' || userRole === 'superadmin' || userRole === 'super_admin' || userRole === 'super administrador') && (
                 <div className="pt-4">
-                    <ROIDashboard data={roiData} />
+                    <ROIDashboard data={currentROIData} />
                 </div>
             )}
 
-            <SalesFunnel funnelSteps={filteredFunnelSteps} />
+            <SalesFunnel 
+                funnelsData={metrics.funnelsData || []}
+                selectedFunnelId={filters.funnelId}
+                onSelectFunnel={(id) => setFilters({ ...filters, funnelId: id, stageId: '' })}
+                funnelSteps={filteredFunnelSteps}
+            />
+
             <RecentLeadsList recentLeads={filteredRecentLeads} />
 
             <FilterModal
@@ -210,7 +288,7 @@ export default function DashboardClient({ metrics, roiData, profileName, tenantI
                 isOpen={isLeadModalOpen}
                 onClose={() => setIsLeadModalOpen(false)}
                 tenantId={tenantId}
-                stages={stages}
+                stages={availableStagesForModal}
                 onSuccess={handleSuccess}
             />
         </div>
